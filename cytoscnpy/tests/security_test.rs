@@ -99,6 +99,17 @@ fn test_subprocess_without_shell_true_is_ok() {
 }
 
 #[test]
+fn test_subprocess_with_args_keyword_and_shell_true() {
+    let source = r#"
+import subprocess
+user_input = "rm -rf /"
+subprocess.call(shell=True, args=user_input)
+"#;
+    scan_danger!(source, linter);
+    assert!(linter.findings.iter().any(|f| f.rule_id == "CSP-D212"));
+}
+
+#[test]
 fn test_requests_default_verify_true_is_ok() {
     let source = "import requests\nrequests.get('https://example.com')\n";
     scan_danger!(source, linter);

@@ -244,23 +244,47 @@ impl Rule for SubprocessRule {
                         )]);
                     }
                 if name.starts_with("subprocess.") {
+                    let mut is_shell_true = false;
+                    let mut args_keyword_expr: Option<&Expr> = None;
+
                     for keyword in &call.keywords {
                         if let Some(arg) = &keyword.arg {
                             if arg == "shell" {
                                 if let Expr::Constant(c) = &keyword.value {
                                     if let ast::Constant::Bool(true) = c.value {
-                                        // Check if args are dynamic
-                                        if !is_literal(&call.args) {
-                                            return Some(vec![create_finding(
-                                                "Potential command injection (subprocess with shell=True and dynamic args)",
-                                                self.code(),
-                                                context,
-                                                call.range().start(),
-                                                "CRITICAL",
-                                            )]);
-                                        }
+                                        is_shell_true = true;
                                     }
                                 }
+                            } else if arg == "args" {
+                                args_keyword_expr = Some(&keyword.value);
+                            }
+                        }
+                    }
+
+                    if is_shell_true {
+                        // Check positional args
+                        if !call.args.is_empty() {
+                            if !is_literal(&call.args) {
+                                return Some(vec![create_finding(
+                                    "Potential command injection (subprocess with shell=True and dynamic args)",
+                                    self.code(),
+                                    context,
+                                    call.range().start(),
+                                    "CRITICAL",
+                                )]);
+                            }
+                        }
+
+                        // Check keyword args
+                        if let Some(expr) = args_keyword_expr {
+                            if !is_literal(std::slice::from_ref(expr)) {
+                                return Some(vec![create_finding(
+                                    "Potential command injection (subprocess with shell=True and dynamic args)",
+                                    self.code(),
+                                    context,
+                                    call.range().start(),
+                                    "CRITICAL",
+                                )]);
                             }
                         }
                     }
