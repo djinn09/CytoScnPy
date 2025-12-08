@@ -2,7 +2,6 @@
 
 ---
 
-## 📋 Executive Summary
 
 This benchmark evaluates **10 dead code detection tools** against a curated Python test suite containing **126 ground truth items** across 6 categories. The goal is to measure detection accuracy (precision, recall, F1), performance (execution time, memory), and identify the best tools for different use cases.
 
