@@ -260,4 +260,4 @@ Apache-2.0 License - see [License](License) file for details.
 CytoScnPy's design and implementation in Rust are inspired by and reference the following Python libraries:
 
 - [**Skylos**](https://github.com/duriantaco/skylos)
-- [**Radon**](https://github.com/PyCQA/radon)
+- [**Radon**](https://github.com/rubik/radon)
