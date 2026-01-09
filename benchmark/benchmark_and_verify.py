@@ -352,6 +352,24 @@ def run_benchmark_tool(name, command, cwd=None, env=None):
                 "unused_parameters",
             ]
             issue_count = sum(len(data.get(k, [])) for k in categories)
+            issue_count = sum(len(data.get(k, [])) for k in categories)
+        except:
+            pass
+    elif name == "CytoScnPy (Rust) Semantic":
+        try:
+            data = json.loads(result.stdout)
+            # Semantic analysis output might structure differently or use same keys
+            # Assuming same output format for now:
+            categories = [
+                "unused_functions",
+                "unused_methods",
+                "unused_imports",
+                "unused_classes",
+                "unused_variables",
+                "unused_parameters",
+                "unreachable_symbols",  # Semantic specific
+            ]
+            issue_count = sum(len(data.get(k, [])) for k in categories)
         except:
             pass
     elif name == "CytoScnPy (Python)":
@@ -499,7 +517,10 @@ class Verification:
     def parse_tool_output(self, name, output):
         findings = set()
 
-        if name in ["CytoScnPy (Rust)", "CytoScnPy (Python)"]:
+        if name in [
+            "CytoScnPy (Rust)",
+            "CytoScnPy (Python)",
+        ]:
             try:
                 data = json.loads(output)
                 # CytoScnPy outputs arrays by type
@@ -524,6 +545,46 @@ class Verification:
                         # Fall back to key-based type for backward compatibility
                         type_name = item.get("def_type", fallback_type)
                         findings.add((fpath, item.get("line"), type_name, item_name))
+            except json.JSONDecodeError as e:
+                print(f"[-] JSON Decode Error for {name}: {e}")
+                print(f"    Output start: {output[:100]}")
+
+        elif name == "CytoScnPy (Rust) Semantic":
+            try:
+                data = json.loads(output)
+                # Parse unreachable_symbols which now has rich info
+                for item in data.get("unreachable_symbols", []):
+                    fpath = normalize_path(item.get("file_path", ""))
+                    lineno = item.get("line")
+
+                    # SymbolType is serialized as string (Function, Class, etc.)
+                    def_type_raw = item.get("def_type", "unknown")
+                    # Map to standard types (lowercase)
+                    type_map = {
+                        "Function": "function",
+                        "Method": "method",
+                        "Class": "class",
+                        "Module": "import",
+                        "Import": "import",
+                        "Variable": "variable",
+                        "Parameter": "variable",
+                        "Attribute": "variable",
+                    }
+                    type_name = type_map.get(def_type_raw, def_type_raw.lower())
+
+                    # Extract simple name from FQN
+                    fqn = item.get("fqn", "")
+                    simple_name = fqn.split(".")[-1] if fqn else ""
+
+                    if type_name in [
+                        "function",
+                        "method",
+                        "class",
+                        "import",
+                        "variable",
+                    ]:
+                        findings.add((fpath, lineno, type_name, simple_name))
+
             except json.JSONDecodeError as e:
                 print(f"[-] JSON Decode Error for {name}: {e}")
                 print(f"    Output start: {output[:100]}")
@@ -1023,6 +1084,10 @@ def main():
             "command": [rust_bin_str, target_dir_str, "--json"],
         },
         {
+            "name": "CytoScnPy (Rust) Semantic",
+            "command": [rust_bin_str, target_dir_str, "--json", "--semantic"],
+        },
+        {
             "name": "CytoScnPy (Python)",
             "command": [
                 sys.executable,
@@ -1290,7 +1355,7 @@ def main():
                 if time_ratio > args.threshold:
                     # Ignore small time increases (< 1.0s) to avoid noise
                     if time_diff > 1.0:
-                        regression_msg = f"{current['name']} Time: {base['time']:.3f}s -> {current['time']:.3f}s (+{time_ratio*100:.1f}%)"
+                        regression_msg = f"{current['name']} Time: {base['time']:.3f}s -> {current['time']:.3f}s (+{time_ratio * 100:.1f}%)"
                         if is_cytoscnpy:
                             cytoscnpy_regressions.append(regression_msg)
                         else:
@@ -1302,7 +1367,7 @@ def main():
                 if mem_ratio > args.threshold:
                     # Ignore small memory increases (< 10MB) to avoid CI noise
                     if mem_diff > 10.0:
-                        regression_msg = f"{current['name']} Memory: {base['memory_mb']:.1f}MB -> {current['memory_mb']:.1f}MB (+{mem_ratio*100:.1f}%)"
+                        regression_msg = f"{current['name']} Memory: {base['memory_mb']:.1f}MB -> {current['memory_mb']:.1f}MB (+{mem_ratio * 100:.1f}%)"
                         if is_cytoscnpy:
                             cytoscnpy_regressions.append(regression_msg)
                         else:

@@ -718,6 +718,7 @@ impl CytoScnPy {
             unused_variables,
             unused_parameters,
             secrets: all_secrets.clone(),
+            fixes: Vec::new(),
             danger: all_danger.clone(),
             quality: all_quality.clone(),
             taint_findings,
@@ -750,6 +751,7 @@ impl CytoScnPy {
                 halstead_metrics: all_halstead_metrics,
             },
             file_metrics,
+            unreachable_symbols: Vec::new(),
         }
     }
 
@@ -1004,6 +1006,7 @@ impl CytoScnPy {
             unused_variables,
             unused_parameters,
             secrets: secrets.clone(),
+            fixes: Vec::new(),
             danger: danger.clone(),
             quality: quality.clone(),
             taint_findings: Vec::new(),
@@ -1035,6 +1038,7 @@ impl CytoScnPy {
                 mi: 0.0,
                 total_issues: danger.len() + quality.len() + secrets.len(),
             }],
+            unreachable_symbols: Vec::new(),
         }
     }
 }

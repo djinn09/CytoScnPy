@@ -49,6 +49,8 @@ fn test_generate_report_full() {
             is_self_referential: false,
             message: Some("unused".to_owned()),
             fix: None,
+            decorators: vec![],
+            is_entry_point: false,
         }],
         unused_methods: vec![],
         unused_imports: vec![],
@@ -66,6 +68,7 @@ fn test_generate_report_full() {
             severity: "MEDIUM".to_owned(),
         }],
         taint_findings: vec![],
+        fixes: vec![],
         parse_errors: vec![],
         clones: vec![],
         file_metrics: vec![FileMetrics {
@@ -94,6 +97,7 @@ fn test_generate_report_full() {
             raw_metrics: cytoscnpy::raw_metrics::RawMetrics::default(),
             halstead_metrics: cytoscnpy::halstead::HalsteadMetrics::default(),
         },
+        unreachable_symbols: vec![],
     };
 
     // Create the mock file so generate_file_views doesn't skip it
@@ -136,6 +140,7 @@ fn test_calculate_score_logic() {
         danger: vec![],
         quality: vec![],
         taint_findings: vec![],
+        fixes: vec![],
         parse_errors: vec![],
         clones: vec![],
         file_metrics: vec![],
@@ -157,6 +162,7 @@ fn test_calculate_score_logic() {
             raw_metrics: cytoscnpy::raw_metrics::RawMetrics::default(),
             halstead_metrics: cytoscnpy::halstead::HalsteadMetrics::default(),
         },
+        unreachable_symbols: vec![],
     };
 
     // 1. Perfect score
@@ -187,6 +193,8 @@ fn test_calculate_score_logic() {
             is_self_referential: false,
             message: None,
             fix: None,
+            decorators: vec![],
+            is_entry_point: false,
         });
     }
     generate_report(&result, analysis_root, output_dir).unwrap();

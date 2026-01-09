@@ -261,6 +261,11 @@ pub struct Cli {
     /// Without this flag, --fix only shows a preview of what would be changed.
     #[arg(short = 'a', long)]
     pub apply: bool,
+
+    /// Use new Semantic Analysis engine (Global Call Graph).
+    /// Provides higher accuracy for unused code detection.
+    #[arg(long, alias = "semantic-analysis")]
+    pub semantic: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -392,5 +397,23 @@ pub enum Commands {
         /// Common options for listing files.
         #[command(flatten)]
         args: FilesArgs,
+    },
+    /// Analyze the impact of changes to a specific symbol.
+    Impact {
+        /// The Fully Qualified Name (FQN) of the symbol to analyze (e.g. "pkg.mod.func").
+        #[arg(short = 's', long)]
+        symbol: String,
+
+        /// Path options (paths vs root).
+        #[command(flatten)]
+        paths: PathArgs,
+
+        /// Output JSON.
+        #[arg(long)]
+        json: bool,
+
+        /// Depth of impact tree to show (default: unlimited).
+        #[arg(long)]
+        depth: Option<usize>,
     },
 }

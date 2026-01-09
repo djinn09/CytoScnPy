@@ -99,6 +99,9 @@ pub mod cfg;
 #[cfg(feature = "python-bindings")]
 mod python_bindings;
 
+/// Module containing the graph-based semantic analysis structures.
+pub mod graph;
+
 // Re-export the Python module at the crate root (required by PyO3)
 #[cfg(feature = "python-bindings")]
 use pyo3::prelude::*;

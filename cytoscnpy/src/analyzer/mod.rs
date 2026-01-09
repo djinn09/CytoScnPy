@@ -8,6 +8,7 @@
 
 mod heuristics;
 mod processing;
+pub mod semantic;
 /// Result types and analysis summaries.
 pub mod types;
 

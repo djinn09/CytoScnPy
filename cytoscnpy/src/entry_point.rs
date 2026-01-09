@@ -571,6 +571,36 @@ pub fn run_with_args_to<W: std::io::Write>(args: Vec<String>, writer: &mut W) ->
                     writer,
                 )?;
             }
+            Commands::Impact {
+                symbol,
+                paths,
+                json,
+                depth,
+            } => {
+                if let Err(code) = validate_path_args(&paths) {
+                    return Ok(code);
+                }
+                // Use --root if provided, otherwise use positional paths
+                let effective_paths = match resolve_subcommand_paths(paths.paths, paths.root) {
+                    Ok(p) => p,
+                    Err(code) => return Ok(code),
+                };
+                let exclude = merge_excludes(vec![], &exclude_folders);
+
+                if let Err(e) = crate::commands::run_impact(
+                    &effective_paths,
+                    &analysis_root,
+                    &symbol,
+                    json,
+                    depth,
+                    config.clone(),
+                    cli_var.output.verbose,
+                    writer,
+                ) {
+                    eprintln!("Error running impact analysis: {}", e);
+                    return Ok(1);
+                }
+            }
         }
         Ok(0)
     } else {
@@ -606,7 +636,52 @@ pub fn run_with_args_to<W: std::io::Write>(args: Vec<String>, writer: &mut W) ->
             || cli_var.max_complexity.is_some()
             || config.cytoscnpy.min_mi.is_some()
             || config.cytoscnpy.max_complexity.is_some()
+            || config.cytoscnpy.min_mi.is_some()
+            || config.cytoscnpy.max_complexity.is_some()
             || html_enabled;
+
+        // Check for Semantic Mode
+        if cli_var.semantic {
+            if cli_var.output.verbose && !cli_var.output.json {
+                eprintln!("[VERBOSE] Semantic Analysis Enabled (Call-Graph based)");
+            }
+
+            // Instantiate SemanticAnalyzer
+            // We need to construct SemanticConfig.
+            // Note: SemanticAnalyzer expects project_root to be absolute or at least consistent.
+            let semantic_config = crate::analyzer::semantic::SemanticConfig {
+                project_root: analysis_root.clone(),
+                include_tests: include_tests,
+                exclude_folders: exclude_folders.clone(),
+                enable_taint: danger,
+                enable_fix: cli_var.fix,
+            };
+
+            let semantic_analyzer =
+                crate::analyzer::semantic::SemanticAnalyzer::new(semantic_config);
+
+            // Run semantic analysis
+            match semantic_analyzer.analyze(&effective_paths) {
+                Ok(result) => {
+                    if cli_var.output.json {
+                        // TODO: Output full semantic result JSON
+                        // SemanticResult currently has minimal fields. We should output what we have.
+                        writeln!(writer, "{}", serde_json::to_string_pretty(&result)?)?;
+                    } else {
+                        eprintln!("Semantic Analysis Complete.");
+                        eprintln!("Total Files: {}", result.total_files);
+                        eprintln!("Total Symbols: {}", result.total_symbols);
+                        eprintln!("Reachable Symbols: {}", result.reachable_symbols);
+                        eprintln!("Duration: {}ms", result.duration_ms);
+                    }
+                    return Ok(0);
+                }
+                Err(e) => {
+                    eprintln!("Error during semantic analysis: {}", e);
+                    return Ok(1);
+                }
+            }
+        }
 
         // Re-declare exclude_folders for this scope (extends global with CLI args)
         let mut exclude_folders = config.cytoscnpy.exclude_folders.clone().unwrap_or_default();

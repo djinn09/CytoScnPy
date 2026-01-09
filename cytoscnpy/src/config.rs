@@ -64,6 +64,16 @@ pub struct CytoScnPyConfig {
     /// Advanced secrets scanning configuration.
     #[serde(default)]
     pub secrets_config: SecretsConfig,
+
+    // Semantic Analysis Configuration
+    /// List of module roots for import resolution (e.g., ["src", "lib"]).
+    pub module_roots: Option<Vec<String>>,
+    /// Whether to error on unresolved imports.
+    pub strict_imports: Option<bool>,
+    /// Whether to treat wildcard imports as covering all symbols.
+    pub flag_wildcards: Option<bool>,
+    /// List of manually defined entry points (file paths).
+    pub entry_points: Option<Vec<String>>,
 }
 
 impl CytoScnPyConfig {

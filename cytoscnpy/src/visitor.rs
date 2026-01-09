@@ -1,4 +1,5 @@
 use crate::constants::MAX_RECURSION_DEPTH;
+use crate::graph::symbols::EntryPoint;
 use crate::utils::LineIndex;
 use compact_str::CompactString;
 use ruff_python_ast::{self as ast, Expr, Stmt};
@@ -141,6 +142,12 @@ pub struct Definition {
     /// Only populated when running with CST analysis enabled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fix: Option<crate::analyzer::types::FixSuggestion>,
+    /// List of decorators applied to this definition.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decorators: Vec<String>,
+    /// Whether this definition marks an entry point (e.g. CLI command, API route).
+    #[serde(default)]
+    pub is_entry_point: bool,
 }
 
 impl Definition {
@@ -227,6 +234,10 @@ pub struct CytoScnPyVisitor<'a> {
     depth: usize,
     /// Whether the recursion limit was hit during traversal.
     pub recursion_limit_hit: bool,
+    /// The dotted module path (e.g., "pkg.mod").
+    pub module_path: String,
+    /// Collected entry points.
+    pub entry_points: Vec<EntryPoint>,
 }
 
 impl<'a> CytoScnPyVisitor<'a> {
@@ -254,9 +265,11 @@ impl<'a> CytoScnPyVisitor<'a> {
             is_dynamic: false,
             metaclass_classes: FxHashSet::default(),
             self_referential_methods: FxHashSet::default(),
-            cached_scope_prefix: cached_prefix,
+            cached_scope_prefix: cached_prefix.clone(),
             depth: 0,
             recursion_limit_hit: false,
+            module_path: cached_prefix.clone(),
+            entry_points: Vec::new(),
         }
     }
 
@@ -271,7 +284,6 @@ impl<'a> CytoScnPyVisitor<'a> {
         (start_line, end_line, start_byte, end_byte)
     }
 
-    /// Helper to add a definition with default parameters.
     fn add_def(
         &mut self,
         name: String,
@@ -289,6 +301,8 @@ impl<'a> CytoScnPyVisitor<'a> {
             start_byte,
             end_byte,
             SmallVec::new(),
+            Vec::new(),
+            false,
         );
     }
 
@@ -413,6 +427,7 @@ impl<'a> CytoScnPyVisitor<'a> {
     }
 
     /// Adds a definition to the list, applying heuristics for implicit usage.
+    #[allow(clippy::too_many_arguments)]
     fn add_def_with_bases(
         &mut self,
         name: String,
@@ -422,6 +437,8 @@ impl<'a> CytoScnPyVisitor<'a> {
         start_byte: usize,
         end_byte: usize,
         base_classes: SmallVec<[String; 2]>,
+        decorators: Vec<String>,
+        is_entry_point: bool,
     ) {
         let simple_name = name.split('.').next_back().unwrap_or(&name).to_owned();
         let in_init = self.file_path.ends_with("__init__.py");
@@ -492,6 +509,8 @@ impl<'a> CytoScnPyVisitor<'a> {
             is_self_referential: false,
             message: Some(message),
             fix,
+            decorators,
+            is_entry_point,
         };
 
         self.definitions.push(definition);
@@ -611,6 +630,28 @@ impl<'a> CytoScnPyVisitor<'a> {
     /// # Recursion Safety
     ///
     /// Uses `MAX_RECURSION_DEPTH` guard to prevent stack overflow on deeply nested code.
+    fn get_expr_name(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Name(name) => Some(name.id.to_string()),
+            Expr::Attribute(attr) => {
+                let base = self.get_expr_name(&attr.value)?;
+                Some(format!("{}.{}", base, attr.attr))
+            }
+            _ => None,
+        }
+    }
+
+    fn synthesize_dataclass_methods(&mut self, line: usize) {
+        if let Some(class_name) = self.class_stack.last().cloned() {
+            let methods = vec!["__init__", "__repr__", "__eq__"];
+            for method in methods {
+                let qualified_name = format!("{class_name}.{method}");
+                self.add_def(qualified_name.clone(), "method", line, line, 0, 0);
+                self.add_local_def(method.to_owned(), qualified_name);
+            }
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     pub fn visit_stmt(&mut self, stmt: &Stmt) {
         // Recursion depth guard to prevent stack overflow on deeply nested code
@@ -624,8 +665,29 @@ impl<'a> CytoScnPyVisitor<'a> {
             // Handle function definitions (both sync and async - ruff uses is_async flag)
             Stmt::FunctionDef(node) => {
                 // Visit decorators (ruff uses Decorator type with .expression field)
+                let mut decorators = Vec::new();
                 for decorator in &node.decorator_list {
                     self.visit_expr(&decorator.expression);
+                    // Collect decorator string representation for semantic analysis
+                    if let Expr::Name(name) = &decorator.expression {
+                        decorators.push(name.id.to_string());
+                    } else if let Expr::Call(call) = &decorator.expression {
+                        if let Expr::Name(func_name) = &*call.func {
+                            decorators.push(func_name.id.to_string());
+                        } else if let Expr::Attribute(attr) = &*call.func {
+                            decorators.push(format!(
+                                "{}.{}",
+                                self.get_expr_name(&attr.value).unwrap_or_default(),
+                                attr.attr
+                            ));
+                        }
+                    } else if let Expr::Attribute(attr) = &decorator.expression {
+                        decorators.push(format!(
+                            "{}.{}",
+                            self.get_expr_name(&attr.value).unwrap_or_default(),
+                            attr.attr
+                        ));
+                    }
                 }
                 // Use .parameters instead of .args in ruff
                 self.visit_arguments(&node.parameters);
@@ -645,30 +707,46 @@ impl<'a> CytoScnPyVisitor<'a> {
                     end_line,
                     start_byte,
                     end_byte,
+                    decorators,
                 );
             }
             // Handle class definitions
             Stmt::ClassDef(node) => {
                 // Check for @dataclass decorator (ruff uses Decorator type)
                 let mut is_dataclass = false;
+                let mut decorators = Vec::new();
                 for decorator in &node.decorator_list {
                     self.visit_expr(&decorator.expression);
                     // Check the inner expression for dataclass decorator
                     if let Expr::Name(name) = &decorator.expression {
+                        decorators.push(name.id.to_string());
                         if name.id.as_str() == "dataclass" {
                             is_dataclass = true;
                         }
                     } else if let Expr::Call(call) = &decorator.expression {
                         if let Expr::Name(func_name) = &*call.func {
+                            decorators.push(func_name.id.to_string());
                             if func_name.id.as_str() == "dataclass" {
                                 is_dataclass = true;
                             }
                         } else if let Expr::Attribute(attr) = &*call.func {
+                            let dec_name = format!(
+                                "{}.{}",
+                                self.get_expr_name(&attr.value).unwrap_or_default(),
+                                attr.attr
+                            );
+                            decorators.push(dec_name);
                             if attr.attr.as_str() == "dataclass" {
                                 is_dataclass = true;
                             }
                         }
                     } else if let Expr::Attribute(attr) = &decorator.expression {
+                        let dec_name = format!(
+                            "{}.{}",
+                            self.get_expr_name(&attr.value).unwrap_or_default(),
+                            attr.attr
+                        );
+                        decorators.push(dec_name);
                         if attr.attr.as_str() == "dataclass" {
                             is_dataclass = true;
                         }
@@ -706,6 +784,8 @@ impl<'a> CytoScnPyVisitor<'a> {
                     start_byte,
                     end_byte,
                     base_classes.clone(),
+                    decorators,
+                    false, // Classes usually aren't entry points in the same way functions are
                 );
 
                 // Register class in local scope so nested classes can be resolved
@@ -761,7 +841,7 @@ impl<'a> CytoScnPyVisitor<'a> {
                 for base_class in &base_classes {
                     if self.metaclass_classes.contains(base_class) {
                         // This class is registered via metaclass side-effect, mark as used
-                        self.add_ref(qualified_name);
+                        self.add_ref(qualified_name.clone());
                         self.add_ref(name.to_string());
                         break;
                     }
@@ -784,64 +864,89 @@ impl<'a> CytoScnPyVisitor<'a> {
 
                 // Exit class scope
                 self.exit_scope();
+
+                // If it's a dataclass, synthesize standard methods like __init__
+                if is_dataclass {
+                    self.synthesize_dataclass_methods(name_line);
+                }
             }
             // Handle imports
             Stmt::Import(node) => {
                 // Add each import to definitions
                 for alias in &node.names {
                     // imports often don't have AS names, so we check
-                    let simple_name = alias.asname.as_ref().unwrap_or(&alias.name);
-                    let (line, end_line, start_byte, end_byte) = self.get_range_info(alias);
+                    let simple_name = alias
+                        .asname
+                        .as_ref()
+                        .map_or(alias.name.id.as_str(), |a| a.id.as_str())
+                        .to_string();
+                    let (line, end_line, start_byte, end_byte) = self.get_range_info(node);
 
-                    self.add_def(
-                        simple_name.to_string(),
-                        "import",
-                        line,
-                        end_line,
-                        start_byte,
-                        end_byte,
-                    );
+                    // Track aliased imports and their original names
+                    if let Some(asname) = &alias.asname {
+                        self.alias_map
+                            .insert(asname.id.to_string(), alias.name.id.to_string());
+                    }
 
-                    self.add_local_def(simple_name.to_string(), simple_name.to_string());
-
-                    // Add alias mapping: asname -> name
-                    self.alias_map
-                        .insert(simple_name.to_string(), alias.name.to_string());
+                    self.add_def(simple_name, "import", line, end_line, start_byte, end_byte);
                 }
             }
             // Handle 'from ... import'
             Stmt::ImportFrom(node) => {
-                // Ignore __future__ imports to prevent false "unused import" positives.
-                // `from __future__ import ...` is a compiler directive, not a real import.
-                if let Some(module) = &node.module {
-                    if module == "__future__" {
-                        return;
+                // Handle relative imports using module_name and level
+                let mut module_path = if let Some(module) = &node.module {
+                    module.to_string()
+                } else {
+                    String::new()
+                };
+
+                // Resolve relative imports if level > 0 (e.g. from . import x, from ..models import y)
+                if node.level > 0 {
+                    let parts: Vec<&str> = self.module_name.split('.').collect();
+                    if parts.len() >= node.level as usize {
+                        let parent_path = parts[..parts.len() - node.level as usize].join(".");
+                        if !parent_path.is_empty() {
+                            if module_path.is_empty() {
+                                module_path = parent_path;
+                            } else {
+                                module_path = format!("{}.{}", parent_path, module_path);
+                            }
+                        }
                     }
                 }
 
+                let module_base = module_path.as_str();
+
+                // Ignore __future__ imports
+                if module_base == "__future__" {
+                    return;
+                }
+
+                let (line, end_line, start_byte, end_byte) = self.get_range_info(node);
+
                 for alias in &node.names {
-                    let asname = alias.asname.as_ref().unwrap_or(&alias.name);
-                    let (line, end_line, start_byte, end_byte) = self.get_range_info(alias);
+                    let imported_name = alias.name.id.as_str();
+                    let def_name = alias
+                        .asname
+                        .as_ref()
+                        .map(|a| a.id.as_str())
+                        .unwrap_or(imported_name)
+                        .to_string();
 
-                    self.add_def(
-                        asname.to_string(),
-                        "import",
-                        line,
-                        end_line,
-                        start_byte,
-                        end_byte,
-                    );
-                    self.add_local_def(asname.to_string(), asname.to_string());
-
-                    // Add alias mapping: asname -> module.name (if module exists) or just name
-                    if let Some(module) = &node.module {
-                        let full_name = format!("{}.{}", module, alias.name);
-                        self.add_ref(full_name.clone());
-                        self.alias_map.insert(asname.to_string(), full_name);
+                    // Map alias -> full name
+                    let original_full_name = if module_base.is_empty() {
+                        imported_name.to_string()
                     } else {
-                        self.alias_map
-                            .insert(asname.to_string(), alias.name.to_string());
-                    }
+                        format!("{}.{}", module_base, imported_name)
+                    };
+
+                    self.alias_map
+                        .insert(def_name.clone(), original_full_name.clone());
+
+                    // Record reference to the imported symbol
+                    self.add_ref(original_full_name);
+
+                    self.add_def(def_name, "import", line, end_line, start_byte, end_byte);
                 }
             }
             // Handle assignments
@@ -851,6 +956,12 @@ impl<'a> CytoScnPyVisitor<'a> {
                     if target.id.as_str() == "__all__" {
                         if let Expr::List(list) = &*node.value {
                             for elt in &list.elts {
+                                if let Expr::StringLiteral(string_lit) = elt {
+                                    self.exports.push(string_lit.value.to_string());
+                                }
+                            }
+                        } else if let Expr::Tuple(tuple) = &*node.value {
+                            for elt in &tuple.elts {
                                 if let Expr::StringLiteral(string_lit) = elt {
                                     self.exports.push(string_lit.value.to_string());
                                 }
@@ -933,6 +1044,8 @@ impl<'a> CytoScnPyVisitor<'a> {
             Stmt::If(node) => {
                 // Check for TYPE_CHECKING guard
                 let mut is_type_checking_guard = false;
+                let mut is_main_guard = false;
+
                 if let Expr::Name(name) = &*node.test {
                     if name.id.as_str() == "TYPE_CHECKING" {
                         is_type_checking_guard = true;
@@ -955,6 +1068,30 @@ impl<'a> CytoScnPyVisitor<'a> {
                             }
                         }
                     }
+                } else if let Expr::Compare(cmp) = &*node.test {
+                    // Check for if __name__ == "__main__":
+                    if let Expr::Name(left) = &*cmp.left {
+                        if left.id.as_str() == "__name__" {
+                            if let Some(op) = cmp.ops.first() {
+                                if matches!(op, ast::CmpOp::Eq) {
+                                    if let Some(Expr::StringLiteral(s)) = cmp.comparators.first() {
+                                        if s.value.to_str() == "__main__" {
+                                            is_main_guard = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if is_main_guard {
+                    let (start_line, _, _, _) = self.get_range_info(node);
+                    self.entry_points.push(EntryPoint {
+                        file_path: self.file_path.as_ref().clone(),
+                        line: start_line,
+                        kind: crate::graph::symbols::EntryPointType::MainBlock,
+                    });
                 }
 
                 self.visit_expr(&node.test);
@@ -1087,6 +1224,7 @@ impl<'a> CytoScnPyVisitor<'a> {
     }
 
     // Helper function to handle shared logic between FunctionDef and AsyncFunctionDef
+    #[allow(clippy::too_many_arguments)]
     fn visit_function_def(
         &mut self,
         name: &str,
@@ -1096,6 +1234,7 @@ impl<'a> CytoScnPyVisitor<'a> {
         end_line: usize,
         start_byte: usize,
         end_byte: usize,
+        decorators: Vec<String>,
     ) {
         let qualified_name = self.get_qualified_name(name);
 
@@ -1106,13 +1245,37 @@ impl<'a> CytoScnPyVisitor<'a> {
             "method"
         };
 
-        self.add_def(
+        // Check for entry point decorators
+        let mut is_entry_point = false;
+        for dec in &decorators {
+            if dec.starts_with("app.")
+                || dec.starts_with("api.")
+                || dec.ends_with(".task")
+                || dec.ends_with(".command")
+                || dec.ends_with(".route")
+            {
+                is_entry_point = true;
+            }
+        }
+
+        // Also check if simple name is main/run (heuristics) if likely standalone script
+        if (name == "main" || name == "run")
+            && self.class_stack.is_empty()
+            && self.module_name != "builtins"
+        {
+            // Weak heuristic: strictly rely on __main__ block usually, but this helps in some frameworks
+        }
+
+        self.add_def_with_bases(
             qualified_name.clone(),
             def_type,
             line,
             end_line,
             start_byte,
             end_byte,
+            SmallVec::new(),
+            decorators,
+            is_entry_point,
         );
 
         // Register the function in the current (parent) scope's local_var_map

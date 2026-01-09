@@ -423,6 +423,18 @@ impl TaintAnalyzer {
             analyzer.clear_cache();
         }
     }
+    /// Registers a cross-file import mapping.
+    pub fn register_import(
+        &mut self,
+        importing_module: &str,
+        alias: &str,
+        actual_module: &str,
+        actual_name: &str,
+    ) {
+        if let Some(ref mut analyzer) = self.crossfile_analyzer {
+            analyzer.register_import(importing_module, alias, actual_module, actual_name);
+        }
+    }
 }
 
 impl Default for TaintAnalyzer {

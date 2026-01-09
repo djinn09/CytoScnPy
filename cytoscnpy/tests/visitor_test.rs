@@ -446,3 +446,50 @@ result = path_join('a', 'b')
         "Using qualified alias should also add simple name 'join'"
     );
 }
+
+#[test]
+fn test_semantic_collection_entry_point() {
+    let code = r"
+if __name__ == '__main__':
+    main()
+";
+    visit_code!(code, visitor);
+
+    println!("Entry points found: {:?}", visitor.entry_points);
+    assert_eq!(
+        visitor.entry_points.len(),
+        1,
+        "Expected 1 entry point, found {:?}",
+        visitor.entry_points
+    );
+    assert_eq!(visitor.entry_points[0].line, 2); // Adjusted for newline in raw string
+                                                 // kind is EntryPointType::MainBlock
+}
+
+#[test]
+fn test_semantic_collection_decorators() {
+    let code = r"
+@app.route('/test')
+def my_route():
+    pass
+";
+    visit_code!(code, visitor);
+
+    assert_eq!(visitor.definitions.len(), 1);
+    let def = &visitor.definitions[0];
+    assert_eq!(def.decorators.len(), 1);
+    assert_eq!(def.decorators[0], "app.route");
+    assert!(def.is_entry_point);
+}
+
+#[test]
+fn test_semantic_collection_all_tuple() {
+    let code = r"
+__all__ = ('a', 'b')
+";
+    visit_code!(code, visitor);
+
+    assert_eq!(visitor.exports.len(), 2);
+    assert!(visitor.exports.contains(&"a".to_owned()));
+    assert!(visitor.exports.contains(&"b".to_owned()));
+}

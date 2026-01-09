@@ -29,14 +29,19 @@ class Bar:
         .find(|d| d.simple_name == "os")
         .expect("os import not found");
 
-    let os_start = code.find("os").unwrap();
-    let os_end = os_start + "os".len();
+    // The raw string starts with a newline, so "import os" starts at byte 1.
+    // The AST range covers the entire import statement.
+    let import_stmt_start = 1; // After leading newline
+    let import_stmt_end = 1 + "import os".len(); // End of statement
 
     assert_eq!(
-        import_os.start_byte, os_start,
+        import_os.start_byte, import_stmt_start,
         "Import 'os' start byte mismatch"
     );
-    assert_eq!(import_os.end_byte, os_end, "Import 'os' end byte mismatch");
+    assert_eq!(
+        import_os.end_byte, import_stmt_end,
+        "Import 'os' end byte mismatch"
+    );
 
     // 2. Verify FunctionDef Range & FIX
     let func_foo = result

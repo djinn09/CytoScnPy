@@ -34,7 +34,10 @@ fn create_mock_result() -> AnalysisResult {
             is_self_referential: false,
             message: None,
             fix: None,
+            decorators: vec![],
+            is_entry_point: false,
         }],
+        unreachable_symbols: vec![],
         unused_methods: vec![],
         unused_imports: vec![],
         unused_classes: vec![],
@@ -72,6 +75,7 @@ fn create_mock_result() -> AnalysisResult {
             raw_metrics: Default::default(),
             halstead_metrics: Default::default(),
         },
+        fixes: vec![],
     }
 }
 
@@ -238,6 +242,8 @@ fn test_print_unused_items_with_items() {
         is_self_referential: false,
         message: None,
         fix: None,
+        decorators: vec![],
+        is_entry_point: false,
     }];
     let result = print_unused_items(&mut buffer, "Unused Functions", &items, "Function");
     assert!(result.is_ok());
@@ -268,6 +274,8 @@ fn test_print_unused_parameters() {
         is_self_referential: false,
         message: None,
         fix: None,
+        decorators: vec![],
+        is_entry_point: false,
     }];
     let result = print_unused_items(&mut buffer, "Unused Parameters", &items, "Parameter");
     assert!(result.is_ok());
@@ -312,6 +320,7 @@ fn test_print_report_full() {
 fn test_print_report_no_issues() {
     let mut buffer = Vec::new();
     let result = AnalysisResult {
+        unreachable_symbols: vec![],
         unused_functions: vec![],
         unused_methods: vec![],
         unused_imports: vec![],
@@ -322,6 +331,7 @@ fn test_print_report_no_issues() {
         danger: vec![],
         quality: vec![],
         taint_findings: vec![],
+        fixes: vec![],
         parse_errors: vec![],
         clones: vec![],
         file_metrics: vec![],

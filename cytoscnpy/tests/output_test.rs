@@ -33,6 +33,8 @@ fn test_print_report_formatting() {
             is_self_referential: false,
             message: Some("'unused_func' is defined but never used".to_owned()),
             fix: None,
+            decorators: vec![],
+            is_entry_point: false,
         }],
         unused_methods: vec![],
         unused_imports: vec![],
@@ -50,6 +52,7 @@ fn test_print_report_formatting() {
         }],
         quality: vec![],
         taint_findings: vec![],
+        fixes: vec![],
         parse_errors: vec![],
         clones: vec![],
         file_metrics: vec![],
@@ -71,6 +74,7 @@ fn test_print_report_formatting() {
             raw_metrics: Default::default(),
             halstead_metrics: Default::default(),
         },
+        unreachable_symbols: vec![],
     };
 
     // Capture output in a buffer
